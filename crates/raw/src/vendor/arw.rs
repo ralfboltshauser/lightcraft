@@ -543,6 +543,32 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let mut metadata = lightcraft_meta::from_tiff(&tiff);
     metadata.width = Some(crop.width as u32);
     metadata.height = Some(crop.height as u32);
+    // The eleven-sample mapping has independent geometry evidence only for this lens.
+    // A lens name is not enough to establish support for every ILCE-6700 configuration.
+    let validated_lens = model != "ILCE-6700" || metadata.lens_model.as_deref() == Some("E 70-350mm F4.5-6.3 G OSS");
+    let validated_format = !linear_rgb && (model != "ILCE-6700" || info.compression == 7);
+    let distortion = if !validated_format || !validated_lens { None } else { super::arw_lens::distortion(&model, raw, Rect::new(0, 0, w, h), crop) };
+    use lightcraft_meta::{EmbeddedLensStatus, LensDataStatus};
+    let distortion_status = if raw.get(0x7037).is_none() {
+        LensDataStatus::NotDetected
+    } else if !matches!(model.as_str(), "ILCE-7RM4A" | "ILCE-6700") {
+        LensDataStatus::UnsupportedCamera
+    } else if !validated_lens {
+        LensDataStatus::UnsupportedLens
+    } else if !validated_format {
+        LensDataStatus::UnsupportedFormat
+    } else if distortion.is_none() {
+        LensDataStatus::RejectedTableOrGeometry
+    } else {
+        LensDataStatus::Available
+    };
+    // Presence is not acceptance. These component tables have no validated decoder yet.
+    let component_status = |tag| if raw.get(tag).is_some() { LensDataStatus::UnsupportedComponent } else { LensDataStatus::NotDetected };
+    metadata.embedded_lens_status = Some(EmbeddedLensStatus {
+        distortion: distortion_status,
+        vignetting: component_status(0x7032),
+        chromatic_aberration: component_status(0x7035),
+    });
     let img = RawImage {
         format: RawFormat::Arw,
         width: w,
@@ -561,10 +587,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         // makes a neutral surface magenta. WB edits remain relative to this as-shot RGB.
         wb_multipliers: if linear_rgb { Some([1.0; 3]) } else { wb },
         linearized: false,
-        opcodes: OpcodeLists {
-            list3: if linear_rgb { Vec::new() } else { super::arw_lens::distortion(&model, raw, Rect::new(0, 0, w, h), crop).into_iter().collect() },
-            ..Default::default()
-        },
+        opcodes: OpcodeLists { list3: distortion.into_iter().collect(), ..Default::default() },
         metadata,
     };
     img.validate_for(mode)?;

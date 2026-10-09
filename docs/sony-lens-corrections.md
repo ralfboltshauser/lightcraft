@@ -1,15 +1,15 @@
 # Sony embedded distortion corrections
 
 LightCraft reads the signed 16-sample distortion table in the raw image IFD (`0x7037`) of
-Sony **ILCE-7RM4A (A7R IVA)** Bayer ARWs, and experimentally reads the signed 11-sample table
-in **ILCE-6700 (α6700)** Bayer ARWs. Other camera models are deliberately left uncorrected,
+Sony **ILCE-7RM4A (A7R IVA)** Bayer ARWs, and reads the signed 11-sample table
+in **ILCE-6700 (α6700)** Bayer ARWs with **E 70–350mm F4.5–6.3 G OSS**. Other camera models are deliberately left uncorrected,
 even when they contain a table with the same layout.
 It converts that table into `OpcodeList3` / `WarpRectilinear`, so the existing profile correction control,
 CPU/GPU optics path, EXIF orientation handling, and DNG export use the same correction.
 
 This adds **distortion only**. Sony vignetting and lateral chromatic-aberration tables are not decoded.
-The enabled and independently validated model is ILCE-7RM4A with the FE 24–105mm F4 G OSS and
-FE 200–600mm F5.6–6.3 G OSS. Linear YCbCr ARWs and non-3:2 camera crops are excluded pending validation. An aspect crop may
+The independently validated combinations are ILCE-7RM4A with the FE 24–105mm F4 G OSS or
+FE 200–600mm F5.6–6.3 G OSS, and ILCE-6700 with E 70–350mm F4.5–6.3 G OSS. Linear YCbCr ARWs and non-3:2 camera crops are excluded pending validation. An aspect crop may
 retain the full-frame radial normalization; the decoder does not guess that relationship. Older files that carry
 only encrypted correction metadata, different table lengths, and rejected tables remain uncorrected.
 The camera's distortion Off setting does not erase its table. Newly imported photos use LightCraft's existing
@@ -113,23 +113,109 @@ useful when the camera actually applied distortion correction; an Off JPEG canno
 Prefer same-renderer Sony On/Off exports when the camera setting or geometry is ambiguous. Table-fit
 error alone only checks our polynomial approximation, not whether the table's interpretation is correct.
 
-## Experimental α6700 extension
+## α6700 / E 70–350mm validation (2026-10-09)
 
-The fork also accepts the exact ILCE-6700 model and its 17-word signed layout with an
-11-sample count. Only the first 11 samples are meaningful; the remaining words are padding.
-Native 3:2 Bayer framing, table plausibility and polynomial-fit gates remain required.
-Synthetic regressions cover rejected layouts, import/probe agreement, rendering and the
-distortion strength control, and preservation through DNG export. The Optics panel checks
-loaded source corrections and enables distortion/vignetting controls independently.
+[Fork issue #1](https://github.com/ralfboltshauser/lightcraft/issues/1) restricts the eleven-sample
+mapping to the exact `ILCE-6700` and `E 70-350mm F4.5-6.3 G OSS` names. The raw-IFD contains
+17 signed words: count 11, eleven useful samples, then padding. The mapping uses evenly spaced
+radii from the default-crop centre to its corner, scale 16384, linear interpolation and the inverse
+output-to-source direction described above. The crop offset is included before orientation. No
+geometry coefficients, per-file translation, scaling or homography were adjusted against holdouts.
+Six independent camera-JPEG-to-uncorrected-RAW landmark pairs are committed in the engine regression;
+they distinguish direction, scale, centre and framing from merely fitting the table to itself.
 
-A preliminary comparison on one private E 70–350mm photograph supported investigating
-the scale, but used an earlier interpolation prototype. It does not independently validate
-this implementation across α6700 lenses or focal lengths. The prepared real-photo batch
-was stopped at the user's request and has not been run. This extension remains experimental;
-do not treat these synthetic tests as proof of geometric fidelity or upstream readiness.
-Private photos and analysis outputs remain outside the repository.
+The local test material comprised 115 private α6700 RAWs: 96 E 70–350mm, ten E 18–135mm,
+seven E PZ 16–50mm OSS II and two E 35mm F1.8 OSS. Pilot comparisons informed the supported-lens
+boundary. The E 18–135mm at 18mm had an edge 95th percentile of approximately 6.7 pixels, exceeding
+the chosen limit; it and the other lenses remain excluded. E 35mm camera correction was Off, so
+its JPEG cannot certify an On correction. Lens identity alone never enables an unvalidated lens.
 
-## Fork validation before commit (2026-10-09)
+Before examining the holdout residuals, the plan fixed limits at a 1600-pixel long edge: median ≤1px,
+95th percentile ≤3px, and outer-radius (`r > 0.7`) 95th percentile ≤3px. These are engineering
+acceptance limits, allowing feature-localisation differences between independently demosaiced,
+sharpened and resized camera JPEGs and LightCraft output while discriminating the observed 8–22px
+uncorrected displacements. They are not a guarantee at full resolution. A scorable image must have
+at least 50 matches, ten outer-radius matches and a maximum matched radius ≥0.85 half diagonals.
+Features in all corners of every photograph were not required; sparse coverage is reported below.
+
+Holdouts were selected independently of residuals: SHA-256-sort the unused basenames within focal
+bins 70mm, 71–149mm, 150–299mm and 300–350mm, then take three from each. Pilot files were excluded.
+Of twelve captures, **eleven passed, none failed, one was inconclusive**. The 135mm photograph had
+maximum matched radius 0.556 and no outer-radius features. The scorable results were:
+
+| Metric at 1600px long edge | Range across eleven holdouts |
+|---|---:|
+| Median direct feature residual | 0.236–0.658px |
+| 95th percentile direct residual | 0.667–2.359px |
+| Outer-radius 95th percentile | 0.558–1.573px |
+
+Spatial coverage (centre `r < 0.3`; corner columns count outer-radius features in each quadrant):
+
+| Holdout | Focal mm | Centre | Top left | Top right | Bottom left | Bottom right |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 70 | 73 | 4 | 5 | 59 | 36 |
+| 2 | 70 | 168 | 0 | 52 | 22 | 18 |
+| 3 | 70 | 33 | 8 | 2 | 36 | 0 |
+| 4 | 128 | 12 | 3 | 0 | 5 | 24 |
+| 5 (inconclusive) | 135 | 104 | 0 | 0 | 0 | 0 |
+| 6 | 105 | 658 | 5 | 0 | 264 | 314 |
+| 7 | 172 | 118 | 0 | 0 | 77 | 56 |
+| 8 | 244 | 186 | 0 | 0 | 22 | 15 |
+| 9 | 193 | 208 | 0 | 0 | 7 | 4 |
+| 10 | 350 | 1033 | 320 | 42 | 31 | 232 |
+| 11 | 350 | 41 | 0 | 0 | 35 | 37 |
+| 12 | 350 | 295 | 45 | 34 | 102 | 148 |
+
+The batch covers all four corner quadrants in aggregate, with weaker upper-corner coverage at
+intermediate focal lengths. Quadrant counts are not observations at the extreme corner pixel.
+
+All captures tested lossless-compressed Bayer RAW, sensor 6656×4608, default crop origin (26,20),
+size 6192×4128 and native 3:2 framing; both landscape and portrait EXIF orientation were exercised.
+Other compression, reduced linear YCbCr and in-camera aspect crops have not been validated for
+this camera/lens combination. The α6700 guard requires lossless compression (TIFF Compression 7);
+linear RGB and non-3:2 crops are rejected. The A7R IVA path is unchanged. The camera JPEG reference
+is accepted only when the file reports distortion correction Auto/On. This establishes geometric
+agreement with the camera's embedded JPEG, not equivalence to Lightroom, Affinity or Imaging Edge.
+
+### Reproduce locally
+
+Build `lightcraft-cli` in release mode, install ExifTool, and use a separate Python 3.11+ analysis venv with
+NumPy and OpenCV. Run `python docs/showcase/verify-sony-lens.py --cli target/release/lightcraft-cli
+--out target/lens-check capture.ARW ...`. The tool explicitly toggles correction off/on, extracts
+and orients the camera JPEG, and measures direct SIFT correspondences after resizing to the actual
+render dimensions. A loose 40px RANSAC gate filters descriptor mismatches; its fitted homography
+is never applied to measured coordinates. It reports centre and quadrant outer-radius coverage,
+and checks input SHA-256 before/after. Clear other geometry edits in a scratch session first.
+An exit code of zero means no scorable failures; inspect inconclusive counts separately. Private
+filenames, hashes, images and measurement output stay under ignored `target/`.
+
+### Native-app and persistence checks
+
+An isolated library created by the old app was reopened with this build. Reload acquired distortion
+without resetting an edited virtual copy (exposure +0.7, lens correction off). Undo/redo, explicit off
+followed by reload, and reopening the library preserved their states. Preview 1600×1067, full-size
+6192×4128 and DNG exports completed. Resizing the full render to preview dimensions gave median
+0.150px and 95th percentile 0.532px across 1844 direct correspondences. Reimported DNG retained the
+same warp planes, centre and radius. Native headless screenshots showed identified camera/lens,
+applied distortion, unavailable vignetting/CA profiles, independent manual controls and no notices.
+All original RAW hashes were unchanged; only scratch copies/library files were written.
+
+The UI and `photo.inspect` distinguish accepted/application state from decoder diagnosis. Reload
+refreshes source diagnostics as well as lens opcodes; edited settings remain intact. Sony vignetting
+and CA metadata presence is reported without pretending those components are decoded. Catalog
+format 4 protects the added operation and diagnostic metadata from older builds silently dropping them.
+
+Synthetic fixtures and measured landmarks are distributable. Two CC0 real α6700 RAWs from
+[raw.pixls.us](https://raw.pixls.us/) (6735 compressed, 6736 lossless-compressed) are added to the
+checksum-pinned corpus manifest. Both use E 16–55mm F2.8 G: the regression checks probe/full agreement,
+recognised component tables and an explicit unvalidated-lens diagnosis with no warp. This fails
+without the lens restriction. The site's 4:3 label for 6736 describes the sensor dimensions; its
+actual default crop is 6192×4128 (3:2). A distributable **positive** E 70–350mm real-file regression
+is still missing; positive real-file coverage remains private, and issue #1 remains open for that
+follow-up. No private photographs, proprietary reference exports or external profile data are
+committed.
+
+## Earlier fork baseline validation (2026-10-09, commit 218e6b4)
 
 `LIGHTCRAFT_GPU_BACKEND=off CRAFT_FONTS_DIR=../craft-fonts cargo xtask ci` passed all eight
 steps: formatting, workspace clippy, optional HEIF checks, workspace tests, parity,
@@ -141,3 +227,22 @@ With the default Metal backend, workspace CI failed two existing GPU denoise tes
 with `cargo test -p lightcraft-gpu --features denoise --lib nn::tests -- --test-threads=1`
 on Apple M2 Max. GPU denoise source was not changed. CPU-mode success does not establish
 Metal denoise correctness or α6700 real-photo geometry fidelity.
+
+## Current implementation checks (2026-10-09)
+
+`LIGHTCRAFT_GPU_BACKEND=off CRAFT_FONTS_DIR=../craft-fonts cargo xtask ci` passed all eight
+steps after the implementation and review fixes: fmt, workspace Clippy, optional HEIF,
+workspace tests, parity, layering, assets and WASM. The new lossless synthetic Sony engine
+regressions and both public α6700 corpus cases passed. Release app and CLI builds and engine/UI
+type checks passed. Python verification-tool syntax was checked without generating committed caches.
+
+Latest native fresh-import E2E additionally checked explicit source diagnoses and the public
+unvalidated E 16–55mm sample, along with toggle/reload/undo/redo, preview/DNG exports and unchanged
+RAW hashes. Refreshing the legacy library's diagnostics preserved both photos' complete develop
+settings and supported metadata undo/redo. Comparing the latest preview with the earlier validated
+preview gave 6995 direct correspondences, median 0px and p95 0.00058px; minor pixel differences did
+not change measured geometry. Native-app tests used isolated scratch libraries and no user-preference
+writes. Private screenshots and media remain local.
+
+The previously reproduced Metal-denoise failures above remain a baseline limitation; no full
+Metal CI success is claimed. A positive public E 70–350mm RAW regression is still outstanding.

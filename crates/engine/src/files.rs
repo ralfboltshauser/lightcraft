@@ -19,6 +19,7 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
     let meta = Meta {
         camera,
         lens: m.lens_model.clone().unwrap_or_default(),
+        embedded_lens_status: m.embedded_lens_status,
         focal_mm: m.focal_length.map(|f| f as f32),
         aperture: m.f_number.map(|f| f as f32),
         shutter,
@@ -135,6 +136,8 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         let relative = crate::camera_preview::file_local_look(raw.format) && !lightcraft_raw::color::has_matrix(&raw.color);
         let as_shot_wb = Some(if relative { (6500.0, 0.0) } else { (t.round(), tint.round()) });
         let embedded_lens = embedded_lens(&raw);
+        let mut meta = meta;
+        meta.embedded_lens_status = raw.metadata.embedded_lens_status;
         return Ok(ProbeInfo {
             embedded_lens,
             width: w,
@@ -566,6 +569,49 @@ impl crate::Session {
 mod tests {
 
     #[test]
+    fn sony_a6700_explains_unsupported_missing_and_rejected_tables() {
+        use lightcraft_meta::LensDataStatus;
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+        for (lens, table, compression, expected) in [
+            (None, Some(11), 7, LensDataStatus::UnsupportedLens),
+            (Some("E 35mm F1.8 OSS"), Some(11), 7, LensDataStatus::UnsupportedLens),
+            (Some("Unknown"), Some(11), 7, LensDataStatus::UnsupportedLens),
+            (Some("E 70-350mm F4.5-6.3 G OSS"), Some(16), 7, LensDataStatus::RejectedTableOrGeometry),
+            (Some("E 70-350mm F4.5-6.3 G OSS"), None, 7, LensDataStatus::NotDetected),
+            (Some("E 70-350mm F4.5-6.3 G OSS"), Some(11), 1, LensDataStatus::UnsupportedFormat),
+        ] {
+            let mut raw = IfdBuilder::new();
+            raw.set(t::MAKE, Value::Ascii("SONY".into()));
+            raw.set(t::MODEL, Value::Ascii("ILCE-6700".into()));
+            raw.set(t::IMAGE_WIDTH, Value::Long(vec![120]));
+            raw.set(t::IMAGE_LENGTH, Value::Long(vec![80]));
+            raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![14]));
+            raw.set(t::COMPRESSION, Value::Short(vec![compression]));
+            raw.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
+            if let Some(count) = table {
+                raw.set(0x7037, Value::SShort(vec![count, 18, 14, 32, 72, 129, 208, 309, 431, 579, 758, 974, 974, 974, 974, 974, 974]));
+            }
+            if let Some(lens) = lens {
+                let mut exif = IfdBuilder::new();
+                exif.set(t::LENS_MODEL, Value::Ascii(lens.into()));
+                raw.set_child(t::EXIF_IFD, exif);
+            }
+            raw.set_image(ImageData::Strips {
+                rows_per_strip: 80,
+                strips: vec![if compression == 7 {
+                    lightcraft_raw::ljpeg::encode(&vec![0; 120 * 80], 120, 80, 1, 14, 1, 0)
+                } else {
+                    vec![0; 120 * 80 * 2]
+                }],
+            });
+            let bytes = TiffWriter::default().write(&[raw]).unwrap();
+            let info = probe_bytes("test.ARW", &bytes).unwrap();
+            assert!(info.embedded_lens.is_none(), "unvalidated lens {lens:?}");
+            assert_eq!(info.meta.embedded_lens_status.unwrap().distortion, expected);
+        }
+    }
+
+    #[test]
     fn sony_a6700_distortion_survives_probe_render_toggle_and_dng_export() {
         use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
         let mut raw = IfdBuilder::new();
@@ -575,27 +621,47 @@ mod tests {
             (t::IMAGE_WIDTH, Value::Long(vec![120])),
             (t::IMAGE_LENGTH, Value::Long(vec![80])),
             (t::BITS_PER_SAMPLE, Value::Short(vec![14])),
+            (t::COMPRESSION, Value::Short(vec![7])),
             (t::SAMPLES_PER_PIXEL, Value::Short(vec![1])),
             (t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA])),
-            (t::COMPRESSION, Value::Short(vec![1])),
             (t::WHITE_LEVEL, Value::Long(vec![16383])),
             (0x7037, Value::SShort(vec![11, 18, 14, 32, 72, 129, 208, 309, 431, 579, 758, 974, 974, 974, 974, 974, 974])),
         ] {
             raw.set(tag, value);
         }
-        let pixels: Vec<u8> = (0..80)
+        let mut exif = IfdBuilder::new();
+        exif.set(t::LENS_MODEL, Value::Ascii("E 70-350mm F4.5-6.3 G OSS".into()));
+        raw.set_child(t::EXIF_IFD, exif);
+        let pixels: Vec<u16> = (0..80)
             .flat_map(|y| {
                 (0..120).flat_map(move |x| {
                     let value = if (x / 12 + y / 10) % 2 == 0 { 6000u16 } else { 1200u16 };
-                    value.to_le_bytes()
+                    [value]
                 })
             })
             .collect();
-        raw.set_image(ImageData::Strips { rows_per_strip: 80, strips: vec![pixels] });
+        raw.set_image(ImageData::Strips { rows_per_strip: 80, strips: vec![lightcraft_raw::ljpeg::encode(&pixels, 120, 80, 1, 14, 1, 0)] });
         let bytes = TiffWriter::default().write(&[raw]).unwrap();
         let original = bytes.clone();
         let header = probe_bytes("test.ARW", &bytes).unwrap();
         assert!(header.embedded_lens.is_some_and(|l| l.warp.is_some()), "alpha6700 lens data was ignored");
+        // Independent SIFT landmarks: the camera JPEG (correction Auto) versus an
+        // uncorrected RAW render, both at 1600 x 1067. These are measurements, not
+        // values generated by the table decoder. No private image is stored here.
+        let mut reference_settings = lightcraft_develop::DevelopSettings::default();
+        reference_settings.optics.lens_profile = true;
+        let warp = lightcraft_pipeline::optics::Warp::from_settings(1600.0, 1067.0, &reference_settings, header.embedded_lens.as_ref());
+        for (camera, source) in [
+            ([161.242, 390.846], [181.516, 395.861]),
+            ([1330.970, 443.272], [1306.682, 447.807]),
+            ([47.883, 947.472], [57.063, 942.573]),
+            ([1492.443, 1009.567], [1482.790, 1002.721]),
+            ([842.565, 463.655], [839.011, 465.393]),
+            ([235.206, 543.287], [258.359, 543.320]),
+        ] {
+            let actual = warp.corrected_to_source(lightcraft_geom::Point::new(camera[0], camera[1]), 1);
+            assert!((actual.x - source[0]).hypot(actual.y - source[1]) < 3.0, "camera landmark {camera:?}: {actual:?} != {source:?}");
+        }
         let (image, info) = load_bytes(&bytes, 120).unwrap();
         assert_eq!(info.lens, header.embedded_lens);
         assert!(info.lens.unwrap().vignette.is_none());
@@ -612,6 +678,42 @@ mod tests {
         let dng = lightcraft_raw::write_dng(&lightcraft_raw::decode(&bytes).unwrap(), &Default::default()).unwrap();
         assert_eq!(probe_bytes("test.dng", &dng).unwrap().embedded_lens, header.embedded_lens);
         assert_eq!(bytes, original, "source bytes must remain unchanged");
+        // Exercise the same public command seam used by the app and CLI.
+        let dir = std::env::temp_dir().join(format!("lc-sony-status-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.ARW");
+        std::fs::write(&path, &bytes).unwrap();
+        let mut session = crate::Session::new().with_fs();
+        session.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let inspect = session.execute("photo.inspect", &serde_json::json!({})).unwrap();
+        assert_eq!(inspect["lensCorrections"]["distortion"]["available"], true);
+        assert_eq!(inspect["lensCorrections"]["distortion"]["applied"], true);
+        assert_eq!(inspect["lensCorrections"]["distortion"]["source"], "embedded");
+        assert_eq!(inspect["lensCorrections"]["distortion"]["status"], "available");
+        assert_eq!(inspect["lensCorrections"]["vignetting"]["available"], false);
+        assert_eq!(inspect["lensCorrections"]["chromaticAberration"]["available"], false);
+        session.execute("develop.merge", &serde_json::json!({"settings": {"optics": {"lens_profile": false}}})).unwrap();
+        let inspect = session.execute("photo.inspect", &serde_json::json!({})).unwrap();
+        assert_eq!(inspect["lensCorrections"]["distortion"]["available"], true);
+        assert_eq!(inspect["lensCorrections"]["distortion"]["applied"], false);
+        session.execute("edit.undo", &serde_json::json!({})).unwrap();
+        assert_eq!(session.execute("photo.inspect", &serde_json::json!({})).unwrap()["lensCorrections"]["distortion"]["applied"], true);
+        // Fixture setup: a library written before this correction was supported.
+        let id = session.active().unwrap();
+        let mut old = (**session.catalog.photo(id).unwrap()).clone();
+        old.embedded_lens = None;
+        old.meta.embedded_lens_status = None;
+        old.develop = std::sync::Arc::new(lightcraft_develop::DevelopSettings::default());
+        session.catalog.apply(lightcraft_catalog::Op::RemovePhoto { id }).unwrap();
+        session.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(old) }).unwrap();
+        session.media.forget(id);
+        assert_eq!(session.execute("photo.reload", &serde_json::json!({})).unwrap()["reloaded"], serde_json::json!([id.0]));
+        assert_eq!(session.execute("photo.inspect", &serde_json::json!({})).unwrap()["lensCorrections"]["distortion"]["applied"], true);
+        session.execute("edit.undo", &serde_json::json!({})).unwrap();
+        assert_eq!(session.execute("photo.inspect", &serde_json::json!({})).unwrap()["lensCorrections"]["distortion"]["available"], false);
+        session.execute("edit.redo", &serde_json::json!({})).unwrap();
+        assert_eq!(session.execute("photo.inspect", &serde_json::json!({})).unwrap()["lensCorrections"]["distortion"]["applied"], true);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
     use super::*;
     use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};

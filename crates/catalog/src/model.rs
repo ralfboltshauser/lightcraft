@@ -158,6 +158,9 @@ impl CopyrightStatus {
 pub struct Meta {
     pub camera: String,
     pub lens: String,
+    /// Read-only source diagnostics, refreshed by photo.reload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_lens_status: Option<lightcraft_meta::EmbeddedLensStatus>,
     pub focal_mm: Option<f32>,
     pub aperture: Option<f32>,
     pub shutter: String,

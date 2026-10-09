@@ -676,6 +676,8 @@ fn sony_embedded_distortion_is_limited_to_validated_models() {
     let root = corpus_root().join("raw");
     let mut checked = 0;
     for (name, model, expected) in [
+        ("arw-sony-a6700-compressed.arw", "ILCE-6700", 0),
+        ("arw-sony-a6700-lossless.arw", "ILCE-6700", 0),
         ("arw-sony-a7rm4a-compressed.arw", "ILCE-7RM4A", 1),
         ("arw-sony-a9m2-compressed.arw", "ILCE-9M2", 0),
         ("arw-sony-a7m3-compressed.arw", "ILCE-7M3", 0),
@@ -698,6 +700,13 @@ fn sony_embedded_distortion_is_limited_to_validated_models() {
         assert_eq!(probe_info(&bytes).unwrap(), full.info(), "{name}");
         assert_eq!(full.metadata.model.as_deref(), Some(model), "{name}");
         assert_eq!(full.opcodes.list3.len(), expected, "{name}: only the validated Sony model gets a distortion warp");
+        if model == "ILCE-6700" {
+            assert_eq!(full.metadata.lens_model.as_deref(), Some("E 16-55mm F2.8 G"));
+            let status = full.metadata.embedded_lens_status.unwrap();
+            assert_eq!(status.distortion, lightcraft_meta::LensDataStatus::UnsupportedLens);
+            assert_eq!(status.vignetting, lightcraft_meta::LensDataStatus::UnsupportedComponent);
+            assert_eq!(status.chromatic_aberration, lightcraft_meta::LensDataStatus::UnsupportedComponent);
+        }
         eprintln!("{name}: {expected} warp(s); header and full decode agree");
         checked += 1;
     }

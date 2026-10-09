@@ -1732,5 +1732,16 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Embedded lens corrections": "內嵌鏡頭校正",
+  "Applied": "已套用",
+  "Available (off)": "可用（已關閉）",
+  "Chromatic Aberration": "色差",
+  "Estimates color fringes from the image; independent of embedded lens corrections.": "根據影像估算色邊，與內嵌鏡頭校正相互獨立。",
+  "Not detected": "未偵測到",
+  "Detected (unsupported camera)": "已偵測到（相機不受支援）",
+  "Detected (unvalidated lens)": "已偵測到（鏡頭未經驗證）",
+  "Detected (unsupported RAW format)": "已偵測到（RAW 格式不受支援）",
+  "Detected (decoder unavailable)": "已偵測到（解碼器不可用）",
+  "Rejected (table or crop geometry)": "已拒絕（資料表或裁切幾何問題）"
 }

@@ -1405,5 +1405,16 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Embedded lens corrections": "Встроенные коррекции объектива",
+  "Applied": "Применена",
+  "Available (off)": "Доступна (выключена)",
+  "Chromatic Aberration": "Хроматическая аберрация",
+  "Estimates color fringes from the image; independent of embedded lens corrections.": "Оценивает цветные ореолы по изображению независимо от встроенных коррекций объектива.",
+  "Not detected": "Не обнаружена",
+  "Detected (unsupported camera)": "Обнаружена (камера не поддерживается)",
+  "Detected (unvalidated lens)": "Обнаружена (объектив не проверен)",
+  "Detected (unsupported RAW format)": "Обнаружена (формат RAW не поддерживается)",
+  "Detected (decoder unavailable)": "Обнаружена (декодер недоступен)",
+  "Rejected (table or crop geometry)": "Отклонена (таблица или геометрия кадрирования)"
 }

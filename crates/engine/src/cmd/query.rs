@@ -137,6 +137,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let id = photo_arg(s, p, "photo.inspect")?;
             let ph = s.catalog.photo(id).ok_or_else(|| bad("photo.inspect", "no such photo"))?;
             let mut v = serde_json::to_value(ph.as_ref()).unwrap_or_default();
+            v["lensCorrections"] = json!(s.lens_corrections(id));
             v["albums"] = json!(s.catalog.albums_of(id).iter().map(|a| a.0).collect::<Vec<_>>());
             v["history"] = json!(ph.history.iter().map(|h| h.label.clone()).collect::<Vec<_>>());
             if let Some(st) = s.catalog.stack_of(id) {

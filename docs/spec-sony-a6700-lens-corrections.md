@@ -1,5 +1,7 @@
 ## Problem Statement
 
+Implementation status: [fork issue #1](https://github.com/ralfboltshauser/lightcraft/issues/1); validated scope is α6700 / E 70–350mm distortion only. See [measurement results and remaining corpus requirement](sony-lens-corrections.md).
+
 A photographer importing Sony α6700 RAW files can see the correct lens name but cannot apply the camera's embedded lens corrections. The Optics panel reports that no lens data is embedded, even though the inspected ARW contains Sony distortion, vignetting, and chromatic-aberration tables. This confuses identification of the lens with support for its correction data.
 
 The observed photo uses an ILCE-6700 and E 70–350mm F4.5–6.3 G OSS at 70mm, f/4.5. Its plain raw-IFD distortion table declares 11 meaningful samples. Open PR #498 supports only independently validated A7R IVA files with 16 samples; it does not solve this case.

@@ -75,6 +75,28 @@ pub enum RegionKind {
     Other(String),
 }
 
+/// Decoder diagnosis of a file's embedded correction component. `NotDetected` does not
+/// claim that encrypted or unrecognised metadata is absent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LensDataStatus {
+    Available,
+    NotDetected,
+    UnsupportedCamera,
+    UnsupportedLens,
+    UnsupportedFormat,
+    UnsupportedComponent,
+    RejectedTableOrGeometry,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedLensStatus {
+    pub distortion: LensDataStatus,
+    pub vignetting: LensDataStatus,
+    pub chromatic_aberration: LensDataStatus,
+}
+
 /// Everything LightCraft shows or searches about a photo. All fields are optional; unknown = `None`/empty.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Metadata {
@@ -89,6 +111,9 @@ pub struct Metadata {
     pub lens_serial_number: Option<String>,
     /// Min/max focal length (mm) and min/max f-number at those, as in Exif `LensSpecification`.
     pub lens_spec: Option<[f64; 4]>,
+    /// Read-only decoder facts; never written to EXIF or XMP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_lens_status: Option<EmbeddedLensStatus>,
     // capture
     pub capture_time: Option<DateTime>,
     /// Seconds.
@@ -165,6 +190,7 @@ impl Metadata {
             lens_model,
             lens_serial_number,
             lens_spec,
+            embedded_lens_status,
             capture_time,
             exposure_time,
             f_number,

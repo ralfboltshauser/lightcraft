@@ -62,7 +62,7 @@ impl SettingsHashes {
 }
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 25;
+pub const RENDER_CACHE_VERSION: u64 = 26;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -1260,6 +1260,34 @@ impl crate::Session {
         Ok(job)
     }
 
+    /// Which embedded corrections the current source can apply. Lens identity is separate metadata.
+    pub fn lens_corrections(&self, id: PhotoId) -> LensCorrections {
+        let lens = self.source_info(id).lens;
+        let settings = self.develop_of(id).unwrap_or_default();
+        let enabled = settings.section_enabled("optics") && settings.optics.lens_profile;
+        use lightcraft_meta::LensDataStatus;
+        let diagnosis = self.catalog.photo(id).and_then(|p| p.meta.embedded_lens_status);
+        let component = |available, strength: f64, status: Option<LensDataStatus>| LensCorrection {
+            available,
+            applied: available && enabled && strength > 0.0,
+            source: (available || status.is_some_and(|s| s != LensDataStatus::NotDetected)).then_some("embedded"),
+            status: if available {
+                LensDataStatus::Available
+            } else {
+                status.filter(|s| *s != LensDataStatus::Available).unwrap_or(LensDataStatus::NotDetected)
+            },
+        };
+        LensCorrections {
+            distortion: component(lens.is_some_and(|l| l.warp.is_some()), settings.optics.profile_distortion, diagnosis.map(|d| d.distortion)),
+            vignetting: component(lens.is_some_and(|l| l.vignette.is_some()), settings.optics.profile_vignetting, diagnosis.map(|d| d.vignetting)),
+            chromatic_aberration: component(
+                lens.and_then(|l| l.warp).is_some_and(|w| w.planes.iter().any(|plane| Some(plane) != w.planes.first())),
+                settings.optics.profile_distortion,
+                diagnosis.map(|d| d.chromatic_aberration),
+            ),
+        }
+    }
+
     /// Prefer decoder facts to header-only metadata for pixel-statistics commands.
     pub fn source_info(&self, id: PhotoId) -> SourceInfo {
         let header = self.catalog.photo(id).map(|p| source_info(p)).unwrap_or_default();
@@ -1274,6 +1302,22 @@ impl crate::Session {
         self.media.insert_source(id, level, r);
         Ok(image)
     }
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct LensCorrection {
+    pub available: bool,
+    pub applied: bool,
+    pub source: Option<&'static str>,
+    pub status: lightcraft_meta::LensDataStatus,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensCorrections {
+    pub distortion: LensCorrection,
+    pub vignetting: LensCorrection,
+    pub chromatic_aberration: LensCorrection,
 }
 
 /// What an import learns from a file header (set by the app from `lightcraft-codecs`/`-raw`).
