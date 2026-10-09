@@ -11,18 +11,22 @@ const DISTORTION: u16 = 0x7037;
 const SAMPLES: usize = 1024;
 const MAX_ERROR: f64 = 0.0005;
 
-/// Only independently validated camera models and the 16-entry layout. Unknown models/layouts
+/// Only explicitly supported camera models and table layouts. Unknown models/layouts
 /// and implausible/non-smooth maps are left uncorrected. See docs/sony-lens-corrections.md.
 /// A camera setting of Off does not remove the lens data: the user can enable it in the developer.
 pub(super) fn distortion(model: &str, ifd: &Ifd, active: Rect, crop: Rect) -> Option<Opcode> {
     // A matching table shape does not establish its scale or radial normalization on another body.
     // Keep this exact: ILCE-7RM4 and ILCE-7RM4A are distinct models, not interchangeable aliases.
-    if model != "ILCE-7RM4A" {
+    let count = match model {
+        "ILCE-7RM4A" => 16,
+        "ILCE-6700" => 11,
+        _ => return None,
+    };
+    let Value::SShort(values) = &ifd.get(DISTORTION)?.value else { return None };
+    if values.len() != 17 || values.first().copied() != Some(count as i16) {
         return None;
     }
-    let Value::SShort(values) = &ifd.get(DISTORTION)?.value else { return None };
-    let [16, table @ ..] = values.as_slice() else { return None };
-    let table: &[i16; 16] = table.try_into().ok()?;
+    let table = values.get(1..count + 1)?;
     if table.iter().all(|v| *v == 0) || table.iter().any(|v| !(-4096..=4096).contains(v)) {
         return None;
     }
@@ -37,8 +41,8 @@ pub(super) fn distortion(model: &str, ifd: &Ifd, active: Rect, crop: Rect) -> Op
     }
     // Interpolate fractional radial scale at evenly spaced radii from centre to cropped corner.
     let scale = |r: f64| {
-        let at = r.clamp(0.0, 1.0) * 15.0;
-        let i = (at.floor() as usize).min(14);
+        let at = r.clamp(0.0, 1.0) * (count - 1) as f64;
+        let i = (at.floor() as usize).min(count - 2);
         let a = f64::from(table[i]);
         let b = f64::from(table[i + 1]);
         1.0 + (a + (b - a) * (at - i as f64)) / 16384.0
@@ -48,7 +52,7 @@ pub(super) fn distortion(model: &str, ifd: &Ifd, active: Rect, crop: Rect) -> Op
     // Zoom until the entire rectangular output boundary is inside the source. For a piecewise-linear
     // scale its maximum on that boundary occurs at its nearest radius or at one of the remaining knots.
     let nearest = cw.min(ch) / diagonal;
-    let max_scale = (0..16).map(|i| i as f64 / 15.0).filter(|&r| r >= nearest).map(scale).fold(scale(nearest), f64::max);
+    let max_scale = (0..count).map(|i| i as f64 / (count - 1) as f64).filter(|&r| r >= nearest).map(scale).fold(scale(nearest), f64::max);
     let zoom = 1.0 / max_scale;
     let basis = |r: f64| {
         let r2 = r * r;
@@ -188,6 +192,25 @@ mod tests {
         for model in ["", "ILCE-7M3", "ILCE-7M4", "ILCE-7RM4", "ILCE-7RM5", "ILCE-9M2", "DSC-RX100M3", "ILCE-7RM4A unknown"] {
             assert!(distortion(model, &valid, AREA, AREA).is_none(), "{model}");
         }
+    }
+
+    #[test]
+    fn a6700_accepts_only_its_signed_eleven_sample_layout() {
+        let values = vec![11, 18, 14, 32, 72, 129, 208, 309, 431, 579, 758, 974, 974, 974, 974, 974, 974];
+        let valid = ifd(Value::SShort(values.clone()));
+        assert!(distortion("ILCE-6700", &valid, AREA, AREA).is_some());
+        for model in ["ILCE-7M4", "ILCE-7RM4A", "ILCE-6700 unknown", ""] {
+            assert!(distortion(model, &valid, AREA, AREA).is_none(), "{model}");
+        }
+        assert!(distortion("ILCE-6700", &table(&TELE), AREA, AREA).is_none());
+        assert!(distortion("ILCE-6700", &ifd(Value::SShort(values[..12].to_vec())), AREA, AREA).is_none());
+        assert!(distortion("ILCE-6700", &valid, AREA, Rect::new(0, 0, 9504, 5346)).is_none());
+        let mut zero = vec![0; 17];
+        zero[0] = 11;
+        assert!(distortion("ILCE-6700", &ifd(Value::SShort(zero)), AREA, AREA).is_none());
+        let mut invalid = values;
+        invalid[4] = i16::MAX;
+        assert!(distortion("ILCE-6700", &ifd(Value::SShort(invalid)), AREA, AREA).is_none());
     }
 
     #[test]

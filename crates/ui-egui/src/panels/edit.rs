@@ -288,7 +288,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "optics", "Optics", |app, ui, d| {
-        let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
+        let lens = app.session.source_info(id).lens;
+        let has_lens = lens.is_some();
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
             let mut ca = d.optics.remove_ca;
             if ui.checkbox(&mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
@@ -300,7 +301,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
             if lp && !has_lens {
                 ui.label(
-                    egui::RichText::new(crate::i18n::tr("No lens data embedded in this file (DNG lens opcodes only)."))
+                    egui::RichText::new(crate::i18n::tr("No supported embedded lens corrections found in this file."))
                         .size(11.0)
                         .color(Tokens::get(ui.ctx()).text_dim),
                 );
@@ -308,7 +309,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
         if d.optics.lens_profile {
             for c in ["optics.profileDistortion", "optics.profileVignetting"] {
-                control(app, ui, d, c, has_lens);
+                control(app, ui, d, c, lens.is_some_and(|l| if c == "optics.profileDistortion" { l.warp.is_some() } else { l.vignette.is_some() }));
             }
         }
         sub_title(ui, crate::i18n::tr("Manual"));

@@ -744,7 +744,7 @@
   "No edits yet.": "Правок пока нет.",
   "No exposure information": "Нет данных об экспозиции",
   "No filter presets yet": "Пресетов фильтров пока нет",
-  "No lens data embedded in this file (DNG lens opcodes only).": "В этом файле нет данных об объективе (только опкоды объектива DNG).",
+  "No supported embedded lens corrections found in this file.": "В этом файле не найдены поддерживаемые встроенные коррекции объектива.",
   "No masks yet. Choose a mask type above.": "Масок пока нет. Выберите тип маски выше.",
   "No matching commands": "Нет подходящих команд",
   "No matching photos": "Нет подходящих фото",

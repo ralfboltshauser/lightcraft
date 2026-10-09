@@ -1,7 +1,8 @@
 # Sony embedded distortion corrections
 
 LightCraft reads the signed 16-sample distortion table in the raw image IFD (`0x7037`) of
-Sony **ILCE-7RM4A (A7R IVA)** Bayer ARWs. Other camera models are deliberately left uncorrected,
+Sony **ILCE-7RM4A (A7R IVA)** Bayer ARWs, and experimentally reads the signed 11-sample table
+in **ILCE-6700 (α6700)** Bayer ARWs. Other camera models are deliberately left uncorrected,
 even when they contain a table with the same layout.
 It converts that table into `OpcodeList3` / `WarpRectilinear`, so the existing profile correction control,
 CPU/GPU optics path, EXIF orientation handling, and DNG export use the same correction.
@@ -111,3 +112,32 @@ residuals and spatial coverage, and check crop/aspect and compression variants. 
 useful when the camera actually applied distortion correction; an Off JPEG cannot certify an On warp.
 Prefer same-renderer Sony On/Off exports when the camera setting or geometry is ambiguous. Table-fit
 error alone only checks our polynomial approximation, not whether the table's interpretation is correct.
+
+## Experimental α6700 extension
+
+The fork also accepts the exact ILCE-6700 model and its 17-word signed layout with an
+11-sample count. Only the first 11 samples are meaningful; the remaining words are padding.
+Native 3:2 Bayer framing, table plausibility and polynomial-fit gates remain required.
+Synthetic regressions cover rejected layouts, import/probe agreement, rendering and the
+distortion strength control, and preservation through DNG export. The Optics panel checks
+loaded source corrections and enables distortion/vignetting controls independently.
+
+A preliminary comparison on one private E 70–350mm photograph supported investigating
+the scale, but used an earlier interpolation prototype. It does not independently validate
+this implementation across α6700 lenses or focal lengths. The prepared real-photo batch
+was stopped at the user's request and has not been run. This extension remains experimental;
+do not treat these synthetic tests as proof of geometric fidelity or upstream readiness.
+Private photos and analysis outputs remain outside the repository.
+
+## Fork validation before commit (2026-10-09)
+
+`LIGHTCRAFT_GPU_BACKEND=off CRAFT_FONTS_DIR=../craft-fonts cargo xtask ci` passed all eight
+steps: formatting, workspace clippy, optional HEIF checks, workspace tests, parity,
+layering, assets and WASM. Both new α6700 synthetic regressions passed.
+
+With the default Metal backend, workspace CI failed two existing GPU denoise tests:
+`nn::tests::the_gpu_gives_what_the_reference_gives` and
+`nn::tests::a_runner_serves_many_tiles_from_many_threads`. Both failures reproduced
+with `cargo test -p lightcraft-gpu --features denoise --lib nn::tests -- --test-threads=1`
+on Apple M2 Max. GPU denoise source was not changed. CPU-mode success does not establish
+Metal denoise correctness or α6700 real-photo geometry fidelity.

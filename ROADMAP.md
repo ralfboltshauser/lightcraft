@@ -58,7 +58,7 @@ Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/par
 4. **Render fidelity suite** (LR-BEHAV-RENDER-FIDELITY, P1): measure our output against Lightroom on the same CC0 raws
    (references stay in the local `plan/`), then tune against the numbers.
 5. **Lens profiles of our own** (LR-EDIT-OPTICS-PROFILE, P1): DNG, Panasonic / Leica RW2 and Sony ILCE-7RM4A Bayer ARW
-   embedded distortion are supported; broaden validation and decode remaining vignetting / lateral CA metadata.
+   embedded distortion are supported; this fork adds experimental ILCE-6700 11-sample distortion with real-photo validation pending. Broaden validation and decode remaining vignetting / lateral CA metadata.
 6. **AI model strategy** (maintainer decision): which permissively licensed models (or our own training) for
    segmentation masks and denoise. Bayer denoise inference is implemented in pure Rust with an opt-in GPL model; release policy and independently licensed weights remain open. Unblocks M12 and Enhance. Face detection and recognition run on our own checked Rust engine. Object / Describe masks now
    run Meta's SAM 3 in pure Rust (optional, user-consented download under the non-OSI SAM License; CDN mirrors still

@@ -564,6 +564,55 @@ impl crate::Session {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn sony_a6700_distortion_survives_probe_render_toggle_and_dng_export() {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+        let mut raw = IfdBuilder::new();
+        for (tag, value) in [
+            (t::MAKE, Value::Ascii("SONY".into())),
+            (t::MODEL, Value::Ascii("ILCE-6700".into())),
+            (t::IMAGE_WIDTH, Value::Long(vec![120])),
+            (t::IMAGE_LENGTH, Value::Long(vec![80])),
+            (t::BITS_PER_SAMPLE, Value::Short(vec![14])),
+            (t::SAMPLES_PER_PIXEL, Value::Short(vec![1])),
+            (t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA])),
+            (t::COMPRESSION, Value::Short(vec![1])),
+            (t::WHITE_LEVEL, Value::Long(vec![16383])),
+            (0x7037, Value::SShort(vec![11, 18, 14, 32, 72, 129, 208, 309, 431, 579, 758, 974, 974, 974, 974, 974, 974])),
+        ] {
+            raw.set(tag, value);
+        }
+        let pixels: Vec<u8> = (0..80)
+            .flat_map(|y| {
+                (0..120).flat_map(move |x| {
+                    let value = if (x / 12 + y / 10) % 2 == 0 { 6000u16 } else { 1200u16 };
+                    value.to_le_bytes()
+                })
+            })
+            .collect();
+        raw.set_image(ImageData::Strips { rows_per_strip: 80, strips: vec![pixels] });
+        let bytes = TiffWriter::default().write(&[raw]).unwrap();
+        let original = bytes.clone();
+        let header = probe_bytes("test.ARW", &bytes).unwrap();
+        assert!(header.embedded_lens.is_some_and(|l| l.warp.is_some()), "alpha6700 lens data was ignored");
+        let (image, info) = load_bytes(&bytes, 120).unwrap();
+        assert_eq!(info.lens, header.embedded_lens);
+        assert!(info.lens.unwrap().vignette.is_none());
+        let mut settings = lightcraft_develop::DevelopSettings::default();
+        let request = lightcraft_pipeline::RenderRequest::fit(120, 80);
+        let render = |s: &lightcraft_develop::DevelopSettings| lightcraft_pipeline::render(&image, &info, s, &request).image;
+        let before = render(&settings);
+        settings.optics.lens_profile = true;
+        let after = render(&settings);
+        assert_eq!((before.width, before.height), (after.width, after.height));
+        assert_ne!(before.data, after.data, "enabling profile correction must move pixels");
+        settings.optics.profile_distortion = 0.0;
+        assert_eq!(before.data, render(&settings).data, "zero strength must preserve the uncorrected result");
+        let dng = lightcraft_raw::write_dng(&lightcraft_raw::decode(&bytes).unwrap(), &Default::default()).unwrap();
+        assert_eq!(probe_bytes("test.dng", &dng).unwrap().embedded_lens, header.embedded_lens);
+        assert_eq!(bytes, original, "source bytes must remain unchanged");
+    }
     use super::*;
     use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
 
