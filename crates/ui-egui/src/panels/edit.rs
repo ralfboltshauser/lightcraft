@@ -300,10 +300,47 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "optics", "Optics", |app, ui, d| {
-        let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
+        let corrections = app.session.lens_corrections(id);
+        let has_lens = corrections.distortion.available || corrections.vignetting.available;
+        if let Some(photo) = app.session.catalog.photo(id) {
+            for (label, value) in [("Camera", &photo.meta.camera), ("Lens", &photo.meta.lens)] {
+                if !value.is_empty() {
+                    ui.label(RichText::new(format!("{}: {value}", crate::i18n::tr(label))).size(11.0).color(Tokens::get(ui.ctx()).text_dim));
+                }
+            }
+        }
+        sub_title(ui, crate::i18n::tr("Embedded lens corrections"));
+        for (label, status) in [
+            ("Distortion", corrections.distortion),
+            ("Vignetting", corrections.vignetting),
+            ("Chromatic Aberration", corrections.chromatic_aberration),
+        ] {
+            let state = if status.applied {
+                "Applied"
+            } else if status.available {
+                "Available (off)"
+            } else {
+                match status.status {
+                    lightcraft_meta::LensDataStatus::Available => "Available (off)",
+                    lightcraft_meta::LensDataStatus::NotDetected => "Not detected",
+                    lightcraft_meta::LensDataStatus::UnsupportedCamera => "Detected (unsupported camera)",
+                    lightcraft_meta::LensDataStatus::UnsupportedLens => "Detected (unvalidated lens)",
+                    lightcraft_meta::LensDataStatus::UnsupportedFormat => "Detected (unsupported RAW format)",
+                    lightcraft_meta::LensDataStatus::UnsupportedComponent => "Detected (decoder unavailable)",
+                    lightcraft_meta::LensDataStatus::RejectedTableOrGeometry => "Rejected (table or crop geometry)",
+                }
+            };
+            ui.label(
+                RichText::new(format!("{}: {}", crate::i18n::tr(label), crate::i18n::tr(state))).size(11.0).color(Tokens::get(ui.ctx()).text_dim),
+            );
+        }
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
             let mut ca = d.optics.remove_ca;
-            if ui.checkbox(&mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
+            if ui
+                .checkbox(&mut ca, crate::i18n::tr("Remove Chromatic Aberration"))
+                .on_hover_text(crate::i18n::tr("Estimates color fringes from the image; independent of embedded lens corrections."))
+                .changed()
+            {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"remove_ca": ca}}, "label": "Remove CA"}));
             }
             let mut lp = d.optics.lens_profile;
@@ -312,7 +349,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
             if lp && !has_lens {
                 ui.label(
-                    egui::RichText::new(crate::i18n::tr("No lens data embedded in this file (DNG lens opcodes only)."))
+                    egui::RichText::new(crate::i18n::tr("No supported embedded lens corrections found in this file."))
                         .size(11.0)
                         .color(Tokens::get(ui.ctx()).text_dim),
                 );
@@ -320,7 +357,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
         if d.optics.lens_profile {
             for c in ["optics.profileDistortion", "optics.profileVignetting"] {
-                control(app, ui, d, c, has_lens);
+                control(
+                    app,
+                    ui,
+                    d,
+                    c,
+                    if c == "optics.profileDistortion" { corrections.distortion.available } else { corrections.vignetting.available },
+                );
             }
         }
         sub_title(ui, crate::i18n::tr("Manual"));

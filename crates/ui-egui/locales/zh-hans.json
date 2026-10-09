@@ -960,7 +960,7 @@
   "No edits yet.": "尚未编辑。",
   "No exposure information": "无曝光信息",
   "No filter presets yet": "暂无筛选器预设",
-  "No lens data embedded in this file (DNG lens opcodes only).": "此文件中未嵌入镜头数据 (仅支持 DNG 镜头操作码)。",
+  "No supported embedded lens corrections found in this file.": "此文件中未找到受支持的嵌入式镜头校正。",
   "No masks yet. Choose a mask type above.": "尚无蒙版。请在上方选择蒙版类型。",
   "No matching photos": "没有匹配的照片",
   "No metadata found": "未找到元数据",
@@ -1734,5 +1734,16 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Embedded lens corrections": "嵌入式镜头校正",
+  "Applied": "已应用",
+  "Available (off)": "可用（已关闭）",
+  "Chromatic Aberration": "色差",
+  "Estimates color fringes from the image; independent of embedded lens corrections.": "根据图像估算色边，与嵌入式镜头校正相互独立。",
+  "Not detected": "未检测到",
+  "Detected (unsupported camera)": "已检测到（相机不受支持）",
+  "Detected (unvalidated lens)": "已检测到（镜头未经验证）",
+  "Detected (unsupported RAW format)": "已检测到（RAW 格式不受支持）",
+  "Detected (decoder unavailable)": "已检测到（解码器不可用）",
+  "Rejected (table or crop geometry)": "已拒绝（数据表或裁剪几何问题）"
 }

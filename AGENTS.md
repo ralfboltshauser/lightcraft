@@ -145,3 +145,17 @@ in CI: it may lag behind the workspace; see README → Quick start.
   GitHub profiles). Never hand-edit `contributors.json`.
 - Maintainers refresh the stats with `python3 ../../craftrules/scripts/contributors.py .` (it also
   re-verifies who wrote each `people.toml` entry; `--check` only verifies).
+
+## Agent skills
+
+### Issue tracker
+
+Track specs and tickets in GitHub Issues on `ralfboltshauser/lightcraft`. Before tracker operations, read `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. Read `docs/agents/triage-labels.md` before triaging.
+
+### Domain docs
+
+Use a single context: root `GLOSSARY.md` and `docs/adr/`. Before exploring the domain, read `docs/agents/domain.md`.

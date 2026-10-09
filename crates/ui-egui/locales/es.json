@@ -893,7 +893,7 @@
   "No edits yet.": "Aún no hay ediciones.",
   "No exposure information": "Sin información de exposición",
   "No filter presets yet": "Aún no hay ajustes preestablecidos de filtro",
-  "No lens data embedded in this file (DNG lens opcodes only).": "Este archivo no incluye datos de objetivo (solo opcodes de objetivo DNG).",
+  "No supported embedded lens corrections found in this file.": "No se encontraron correcciones de objetivo integradas compatibles en este archivo.",
   "No masks yet. Choose a mask type above.": "Aún no hay máscaras. Elegir un tipo de máscara arriba.",
   "No matching commands": "Ningún comando coincide",
   "No matching photos": "No hay fotos coincidentes",
@@ -1734,5 +1734,16 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Embedded lens corrections": "Correcciones de objetivo integradas",
+  "Applied": "Aplicada",
+  "Available (off)": "Disponible (desactivada)",
+  "Chromatic Aberration": "Aberración cromática",
+  "Estimates color fringes from the image; independent of embedded lens corrections.": "Estima los bordes de color de la imagen; independiente de las correcciones de objetivo integradas.",
+  "Not detected": "No detectada",
+  "Detected (unsupported camera)": "Detectada (cámara no compatible)",
+  "Detected (unvalidated lens)": "Detectada (objetivo no validado)",
+  "Detected (unsupported RAW format)": "Detectada (formato RAW no compatible)",
+  "Detected (decoder unavailable)": "Detectada (decodificador no disponible)",
+  "Rejected (table or crop geometry)": "Rechazada (tabla o geometría del recorte)"
 }
