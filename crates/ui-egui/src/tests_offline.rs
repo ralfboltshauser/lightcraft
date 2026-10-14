@@ -76,6 +76,9 @@ fn offline_originals_never_block_a_frame() {
     let ui_thread = std::thread::current().id();
     h.app.ui.view = ViewMode::PhotoGrid;
     h.step();
+    // The first frame installs fonts; finish the first layout before timing the views.
+    h.step();
+    assert!(h.app.fonts_ready, "the UI is initialized before frame timing starts");
     assert!(h.app.session.media.availability.is_background(), "the app checks files off the UI thread");
 
     // the grid: every cell asks for its thumbnail (which asks whether the original is there)
@@ -123,7 +126,8 @@ fn import_reads_files_off_the_ui_thread_and_can_be_cancelled() {
     let dir = std::env::temp_dir().join(format!("lc-ui-slow-import-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let n = 40;
+    // enough files that the import is still running when its activity row shows (after 0.5 s)
+    let n = 120;
     for i in 0..n {
         std::fs::write(dir.join(format!("IMG_{i:03}.jpg")), format!("not really a jpeg {i}")).unwrap();
     }
@@ -145,6 +149,9 @@ fn import_reads_files_off_the_ui_thread_and_can_be_cancelled() {
     let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
     let ui_thread = std::thread::current().id();
     h.step();
+    // The first frame installs fonts; finish the first layout before timing the import.
+    h.step();
+    assert!(h.app.fonts_ready, "the UI is initialized before import timing starts");
     let undo0 = h.app.session.undo.len();
     crate::import::start_paths(&mut h.app, vec![dir.to_string_lossy().to_string()]).unwrap();
     // some batches arrive; meanwhile every frame is quick
@@ -160,8 +167,11 @@ fn import_reads_files_off_the_ui_thread_and_can_be_cancelled() {
     assert!(h.app.import.is_some(), "still importing");
     let status = h.app.import.as_ref().map(crate::import::ImportTask::status).unwrap_or_default();
     assert!(status["total"].as_u64().unwrap_or(0) >= 8, "{status}");
-    // Cancel: the files being read finish, nothing new starts
-    let r = h.request("ui.clickWidget", json!({"id": "button:importCancel"}), Duration::from_secs(10));
+    // Cancel (the ✕ of its row in the activity stack): the files being read finish, nothing new starts
+    let id = h.app.session.activity.list().first().map(|t| t.id).expect("an import row");
+    let cross = format!("activity:cancel:{id}");
+    assert!(h.step_until(Duration::from_secs(10), |h| h.app.widgets.iter().any(|(w, _)| *w == cross)), "the row shows");
+    let r = h.request("ui.clickWidget", json!({"id": cross}), Duration::from_secs(10));
     assert_eq!(r["ok"], true, "{r}");
     let t0 = Instant::now();
     while h.app.import.is_some() && t0.elapsed() < Duration::from_secs(60) {

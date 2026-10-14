@@ -124,6 +124,34 @@ fn disk_cache_roundtrip_and_prune() {
 }
 
 #[test]
+fn disk_cache_overwrite_accounts_for_replaced_jpeg_only_once() {
+    let dir = temp_dir("overwrite");
+    let cache = DiskCache::new(&dir, 1 << 20);
+    let (a, b) = (hash_bytes(b"overwrite-a"), hash_bytes(b"overwrite-b"));
+    let first = gradient(80, 60, 4);
+    cache.put(a, &first);
+    cache.put(b, &gradient(80, 60, 7));
+    let initial = cache.size();
+
+    // Re-rendering the same key used to double-count bytes although the
+    // replacement occupied exactly the same pathname on disk.
+    cache.put(a, &first);
+    assert_eq!(cache.size(), initial);
+    assert!(cache.get(b).is_some());
+
+    // A replacement with a different encoded size must also update the total.
+    cache.put(a, &gradient(120, 90, 9));
+    let path = |key: Hash128| {
+        let hex = key.to_string();
+        dir.join(&hex[..2]).join(format!("{hex}.jpg"))
+    };
+    let actual = std::fs::metadata(path(a)).unwrap().len() + std::fs::metadata(path(b)).unwrap().len();
+    assert_eq!(cache.size(), actual);
+    cache.clear();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn preview_cache_memory_then_disk() {
     let dir = temp_dir("pc");
     let k = hash_bytes(b"x");
@@ -201,6 +229,119 @@ fn pool_runs_inline() {
     assert_eq!(p.try_recv().map(|d| d.result), Some(1));
 }
 
+/// A pool with one worker that is inside a job until the returned sender is used or dropped.
+fn pool_with_a_running_job() -> (JobPool<u8, ()>, std::sync::mpsc::Sender<()>) {
+    let mut p: JobPool<u8, ()> = JobPool::new(1);
+    let (started, has_started) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    p.submit(
+        1,
+        0,
+        1,
+        Box::new(move || {
+            let _ = started.send(());
+            let _ = released.recv_timeout(std::time::Duration::from_secs(60));
+        }),
+    );
+    has_started.recv().unwrap();
+    (p, release)
+}
+
+#[test]
+fn pool_drop_waits_for_running_job() {
+    // issue #620: a job that outlives its pool can still be inside the GPU driver when the process exits
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut p: JobPool<u8, ()> = JobPool::new(1);
+    let (started, has_started) = std::sync::mpsc::channel();
+    let (finished, queued_ran) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let f = finished.clone();
+    p.submit(
+        1,
+        0,
+        9,
+        Box::new(move || {
+            let _ = started.send(());
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            f.store(true, Ordering::SeqCst);
+        }),
+    );
+    has_started.recv().unwrap();
+    let q = queued_ran.clone();
+    p.submit(2, 0, 1, Box::new(move || q.store(true, Ordering::SeqCst)));
+    drop(p);
+    assert!(finished.load(Ordering::SeqCst), "drop returned while the job was still running");
+    assert!(!queued_ran.load(Ordering::SeqCst), "a job that had not started is discarded");
+}
+
+#[test]
+fn pool_shutdown_reports_workers_and_drop_does_not_wait_again() {
+    let (mut p, release) = pool_with_a_running_job();
+    assert_eq!(p.live_workers(), 1);
+    let t0 = std::time::Instant::now();
+    assert!(!p.shutdown(std::time::Duration::from_millis(100)), "the job is still running");
+    let waited = t0.elapsed();
+    assert!(waited >= std::time::Duration::from_millis(100) && waited < std::time::Duration::from_secs(30), "{waited:?}");
+    assert_eq!(p.live_workers(), 1);
+    // stopped: nothing new is queued, and the job that ends is noticed
+    p.submit(2, 0, 1, Box::new(|| ()));
+    assert_eq!(p.queued(), 0);
+    drop(release);
+    assert!(p.shutdown(std::time::Duration::from_secs(30)));
+    assert_eq!(p.live_workers(), 0);
+
+    let (mut p, _release) = pool_with_a_running_job();
+    assert!(!p.shutdown(std::time::Duration::ZERO));
+    let t0 = std::time::Instant::now();
+    drop(p);
+    assert!(t0.elapsed() < std::time::Duration::from_secs(1), "dropped after a shutdown: no second wait");
+}
+
+#[test]
+fn pool_drop_is_bounded_when_a_job_never_ends() {
+    // a job blocked on something its owner holds must not hang the owner (it would hang quitting)
+    let (p, _release) = pool_with_a_running_job();
+    let t0 = std::time::Instant::now();
+    drop(p);
+    let waited = t0.elapsed();
+    assert!(waited >= std::time::Duration::from_secs(1) && waited < std::time::Duration::from_secs(30), "{waited:?}");
+}
+
+#[test]
+fn pool_stops_after_a_job_panicked_and_when_dropped_by_its_own_job() {
+    // a worker that unwound is not waited for
+    let mut p: JobPool<u8, ()> = JobPool::new(1);
+    p.submit(1, 0, 1, Box::new(|| panic!("a job panics (expected in this test)")));
+    while p.live_workers() > 0 {
+        std::thread::yield_now();
+    }
+    assert!(p.shutdown(std::time::Duration::from_secs(30)));
+
+    // the last owner of a pool is one of its jobs: the worker must not wait for (or join) itself
+    let slot: Arc<std::sync::Mutex<Option<JobPool<u8, ()>>>> = Arc::new(std::sync::Mutex::new(None));
+    let (dropped, has_dropped) = std::sync::mpsc::channel();
+    let mut p: JobPool<u8, ()> = JobPool::new(1);
+    let s = slot.clone();
+    p.submit(
+        1,
+        0,
+        1,
+        Box::new(move || {
+            let own = loop {
+                if let Some(p) = s.lock().unwrap().take() {
+                    break p;
+                }
+                std::thread::yield_now();
+            };
+            let t0 = std::time::Instant::now();
+            drop(own);
+            let _ = dropped.send(t0.elapsed());
+        }),
+    );
+    *slot.lock().unwrap() = Some(p);
+    let waited = has_dropped.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+    assert!(waited < std::time::Duration::from_secs(1), "{waited:?}");
+}
+
 #[test]
 fn disk_cache_never_touches_foreign_files() {
     // issue #98: a library opened on a folder that already has a `thumbs/` folder
@@ -237,4 +378,93 @@ fn disk_cache_never_touches_foreign_files() {
     assert!(disk::is_cache_file("01", "0123456789abcdef0123456789abcdef.jpg"));
     assert!(!disk::is_cache_file("01", "0123456789abcdef0123456789abcdef.jpg.bak"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// [`JobPool::wait`] returns once a job finishes, which [`JobPool::try_recv`] then hands out, or
+/// after the timeout.
+#[test]
+fn pool_wait_keeps_the_finished_job_for_try_recv() {
+    let mut p: JobPool<u8, u8> = JobPool::new(1);
+    assert!(!p.wait(std::time::Duration::from_millis(10)), "nothing runs");
+    p.submit(1, 0, 1, Box::new(|| 7));
+    assert!(p.wait(std::time::Duration::from_secs(10)));
+    assert!(p.wait(std::time::Duration::ZERO), "kept until taken");
+    assert_eq!(p.try_recv().map(|d| d.result), Some(7));
+    assert!(p.try_recv().is_none());
+}
+
+/// Wait up to `secs` for `f` to hold.
+fn eventually(secs: u64, mut f: impl FnMut() -> bool) -> bool {
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < std::time::Duration::from_secs(secs) {
+        if f() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    false
+}
+
+/// A slider drag submits for a view faster than its renders finish. A newer job for a slot used
+/// to start beside the running one on another worker: one view's renders piled up on the GPU and
+/// most were thrown away. Now a slot runs one job at a time: the newer one waits (replacing an
+/// older one still queued), other slots keep going, and it starts when the slot's job ends.
+#[test]
+fn a_slot_runs_one_job_at_a_time() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut p: JobPool<u8, u32> = JobPool::new(4);
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (started, has_started) = std::sync::mpsc::channel();
+    let running = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let job = |n: u32, wait: Option<std::sync::mpsc::Receiver<()>>| -> crate::pool::Job<u32> {
+        let (running, most, started) = (running.clone(), most.clone(), started.clone());
+        Box::new(move || {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            let _ = started.send(n);
+            if let Some(w) = wait {
+                let _ = w.recv_timeout(std::time::Duration::from_secs(30));
+            }
+            running.fetch_sub(1, Ordering::SeqCst);
+            n
+        })
+    };
+    p.submit(1, 1, 9, job(1, Some(released)));
+    assert_eq!(has_started.recv().unwrap(), 1);
+    // two newer requests for the busy slot: the second replaces the first, neither starts
+    p.submit(1, 2, 9, job(2, None));
+    p.submit(1, 3, 9, job(3, None));
+    // another slot is not held up
+    p.submit(2, 9, 1, Box::new(|| 9));
+    let mut done = Vec::new();
+    assert!(eventually(10, || {
+        done.extend(std::iter::from_fn(|| p.try_recv()).map(|d| d.result));
+        done.contains(&9)
+    }));
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(has_started.try_recv().is_err(), "a second job of slot 1 started beside the first");
+    assert!(p.is_queued(1));
+    drop(release);
+    assert!(eventually(10, || {
+        done.extend(std::iter::from_fn(|| p.try_recv()).map(|d| d.result));
+        done.contains(&3)
+    }));
+    assert!(!done.contains(&2), "the replaced job never runs");
+    assert_eq!(most.load(Ordering::SeqCst), 1, "slot 1 ran two jobs at once");
+}
+
+/// A job that panics still frees its slot: the slot's next job runs (on another worker).
+#[test]
+fn a_panicking_job_frees_its_slot() {
+    let mut p: JobPool<u8, u32> = JobPool::new(2);
+    p.submit(1, 1, 9, Box::new(|| panic!("simulated render panic")));
+    assert!(eventually(10, || !p.is_queued(1) && p.live_workers() == 1));
+    p.submit(1, 2, 9, Box::new(|| 2));
+    let mut got = None;
+    assert!(eventually(10, || {
+        got = got.or_else(|| p.try_recv().map(|d| d.result));
+        got.is_some()
+    }));
+    assert_eq!(got, Some(2));
 }
